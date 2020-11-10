@@ -10,9 +10,11 @@ For the language grammar, please refer to Grammar section on the github page:
 
 #define MAX_LENGTH 200
 #define NULLREG -300
+
 typedef enum {
 	ASSIGN, ADD, SUB, MUL, DIV, REM, PREINC, PREDEC, POSTINC, POSTDEC, IDENTIFIER, CONSTANT, LPAR, RPAR, PLUS, MINUS, LOAD, STORE
 } Kind;
+
 typedef enum {
 	STMT, EXPR, ASSIGN_EXPR, ADD_EXPR, MUL_EXPR, UNARY_EXPR, POSTFIX_EXPR, PRI_EXPR
 } GrammarState;
@@ -24,11 +26,13 @@ typedef enum {
 typedef enum {
 	FREE, USED, IDEN
 } RegisterState;
+
 typedef struct TokenUnit {
 	Kind kind;
 	int val; // record the integer value or variable name
 	struct TokenUnit *next;
 } Token;
+
 typedef struct ASTUnit {
 	Kind kind;
 	int val; // record the integer value or variable name
@@ -101,6 +105,10 @@ void storeValues();
 // Print ASM code starting from s
 void printASM(int start);
 
+int isConstant(AST *root);
+int getConstant(AST *root);
+AST *newConstantAST(int val);
+void simplifyTree(AST *root);
 
 /// debug interfaces
 
@@ -136,7 +144,13 @@ int main(int argc, char **argv) {
 		AST *ast_root = parser(content, len);
 		if (DEBUG)
 			AST_print(ast_root);
+
 		semantic_check(ast_root);
+
+		simplifyTree(ast_root);
+		if (DEBUG)
+			AST_print(ast_root);
+
 		codegen(ast_root);
 		freeRegisters();
 		if (DEBUG) {
@@ -362,7 +376,6 @@ void semantic_check(AST *now) {
 	// Left operand of '=' must be an identifier or identifier with one or more parentheses.
 	if (now->kind == ASSIGN) {
 		AST *tmp = now->lhs;
-		while (tmp->kind == LPAR) tmp = tmp->mid;
 		if (tmp->kind != IDENTIFIER)
 			err("Lvalue is required as left operand of assignment.");
 	}
@@ -373,7 +386,6 @@ void semantic_check(AST *now) {
 	if (now->kind == PREINC || now->kind == POSTINC ||
 		now->kind == PREDEC || now->kind == POSTDEC) {
 		AST *tmp = now->mid;
-		while (tmp->kind == LPAR) tmp = tmp->mid;
 		if (!(tmp->kind == IDENTIFIER || tmp->kind == ASSIGN))
 			err("INC/DEC must follow an identifier.");
 	}
@@ -381,6 +393,313 @@ void semantic_check(AST *now) {
 	semantic_check(now->lhs);
 	semantic_check(now->mid);
 	semantic_check(now->rhs);
+}
+
+int isConstant(AST *root) {
+	if (root->kind == CONSTANT)
+		return 1;
+	if (root->kind == MINUS && root->mid->kind == CONSTANT)
+		return 1;
+	return 0;
+}
+
+int getConstant(AST *root) {
+	if (root->kind == CONSTANT)
+		return root->val;
+	if (root->kind == MINUS && root->mid->kind == CONSTANT)
+		return -(root->mid->val);
+	err("Not a constant!");
+}
+
+AST *newConstantAST(int val) {
+	if (val >= 0)
+		return new_AST(CONSTANT, val);
+
+	AST *tmp = new_AST(MINUS, 0);
+	tmp->mid = new_AST(CONSTANT, -val);
+	return tmp;
+}
+
+void simplifyTree(AST *root) {
+	if (root == NULL)
+		return;
+
+	simplifyTree(root->lhs);
+	simplifyTree(root->mid);
+	simplifyTree(root->rhs);
+
+	if (root->kind == ADD) {
+		if (isConstant(root->lhs) && isConstant(root->rhs)) {
+			AST *tmp = root;
+			root = newConstantAST(getConstant(root->lhs) + getConstant(root->rhs));
+			freeAST(tmp);
+			return;
+		}
+		if (isConstant(root->lhs) && getConstant(root->lhs) == 0) {
+			AST *tmp = root;
+			root = root->rhs;
+			freeAST(tmp->lhs);
+			free(tmp);
+			return;
+		}
+		if (isConstant(root->rhs) && getConstant(root->rhs) == 0) {
+			AST *tmp = root;
+			root = root->lhs;
+			freeAST(tmp->rhs);
+			free(tmp);
+			return;
+		}
+		if (isConstant(root->lhs) && root->rhs->kind == ADD) {
+			if (isConstant(root->rhs->lhs)) {
+				AST *tmp = root->lhs;
+				root->lhs = newConstantAST(getConstant(root->lhs) + getConstant(root->rhs->lhs));
+				freeAST(tmp);
+				root->rhs = root->rhs->rhs;
+				return;
+			}
+			if (isConstant(root->rhs->rhs)) {
+				AST *tmp = root->lhs;
+				root->lhs = newConstantAST(getConstant(root->lhs) + getConstant(root->rhs->rhs));
+				freeAST(tmp);
+				root->rhs = root->rhs->lhs;
+				return;
+			}
+		}
+		if (isConstant(root->rhs) && root->lhs->kind == ADD) {
+			if (isConstant(root->lhs->lhs)) {
+				AST *tmp = root->rhs;
+				root->rhs = newConstantAST(getConstant(root->rhs) + getConstant(root->lhs->lhs));
+				freeAST(tmp);
+				root->lhs = root->lhs->rhs;
+				return;
+			}
+			if (isConstant(root->lhs->rhs)) {
+				AST *tmp = root->rhs;
+				root->rhs = newConstantAST(getConstant(root->rhs) + getConstant(root->lhs->rhs));
+				freeAST(tmp);
+				root->lhs = root->lhs->lhs;
+				return;
+			}
+		}
+		if (root->lhs->kind == ADD && root->rhs->kind == ADD) {
+			int res = -1;
+			AST *ls, *rs;
+			int ok = 0;
+			if (isConstant(root->lhs->lhs) && isConstant(root->rhs->lhs)) {
+				res = getConstant(root->lhs->lhs) + getConstant(root->rhs->lhs);
+				ls = root->lhs->rhs, rs = root->rhs->rhs;
+				ok = 1;
+			} else if (isConstant(root->lhs->lhs) && isConstant(root->rhs->rhs)) {
+				res = getConstant(root->lhs->lhs) + getConstant(root->rhs->rhs);
+				ls = root->lhs->rhs, rs = root->rhs->lhs;
+				ok = 1;
+			} else if (isConstant(root->lhs->rhs) && isConstant(root->rhs->lhs)) {
+				res = getConstant(root->lhs->rhs) + getConstant(root->rhs->lhs);
+				ls = root->lhs->lhs, rs = root->rhs->rhs;
+				ok = 1;
+			} else if (isConstant(root->lhs->rhs) && isConstant(root->rhs->rhs)) {
+				res = getConstant(root->lhs->rhs) + getConstant(root->rhs->rhs);
+				ls = root->lhs->lhs, rs = root->rhs->lhs;
+				ok = 1;
+			}
+			if (ok) {
+				AST *tmp = root->lhs;
+				root->lhs = newConstantAST(res);
+				free(tmp);
+				root->rhs = new_AST(ADD, 0);
+				root->rhs->lhs = ls;
+				root->rhs->rhs = rs;
+				return;
+			}
+		}
+	}
+	if (root->kind == MUL) {
+		if (isConstant(root->lhs) && isConstant(root->rhs)) {
+			AST *tmp = root;
+			root = newConstantAST(getConstant(root->lhs) * getConstant(root->rhs));
+			freeAST(tmp);
+			return;
+		}
+		if ((isConstant(root->lhs) && getConstant(root->lhs) == 0) ||
+			(isConstant(root->rhs) && getConstant(root->rhs) == 0)) {
+			AST *tmp = root;
+			root = newConstantAST(0);
+			freeAST(tmp);
+			return;
+		}
+		if (isConstant(root->lhs) && getConstant(root->lhs) == 1) {
+			AST *tmp = root;
+			root = root->rhs;
+			freeAST(tmp->lhs);
+			free(tmp);
+			return;
+		}
+		if (isConstant(root->rhs) && getConstant(root->rhs) == 1) {
+			AST *tmp = root;
+			root = root->lhs;
+			freeAST(tmp->rhs);
+			free(tmp);
+			return;
+		}
+		if (isConstant(root->lhs) && getConstant(root->lhs) == -1) {
+			AST *tmp = root;
+			root = new_AST(MINUS, 0);
+			root->mid = tmp->rhs;
+			freeAST(tmp->lhs);
+			free(tmp);
+			return;
+		}
+		if (isConstant(root->rhs) && getConstant(root->rhs) == -1) {
+			AST *tmp = root;
+			root = new_AST(MINUS, 0);
+			root->mid = tmp->lhs;
+			freeAST(tmp->rhs);
+			free(tmp);
+			return;
+		}
+		if (isConstant(root->lhs) && root->rhs->kind == MUL) {
+			if (isConstant(root->rhs->lhs)) {
+				AST *tmp = root->lhs;
+				root->lhs = newConstantAST(getConstant(root->lhs) * getConstant(root->rhs->lhs));
+				freeAST(tmp);
+				root->rhs = root->rhs->rhs;
+				return;
+			}
+			if (isConstant(root->rhs->rhs)) {
+				AST *tmp = root->lhs;
+				root->lhs = newConstantAST(getConstant(root->lhs) * getConstant(root->rhs->rhs));
+				freeAST(tmp);
+				root->rhs = root->rhs->lhs;
+				return;
+			}
+		}
+		if (isConstant(root->rhs) && root->lhs->kind == MUL) {
+			if (isConstant(root->lhs->lhs)) {
+				AST *tmp = root->rhs;
+				root->rhs = newConstantAST(getConstant(root->rhs) * getConstant(root->lhs->lhs));
+				freeAST(tmp);
+				root->lhs = root->lhs->rhs;
+				return;
+			}
+			if (isConstant(root->lhs->rhs)) {
+				AST *tmp = root->rhs;
+				root->rhs = newConstantAST(getConstant(root->rhs) * getConstant(root->lhs->rhs));
+				freeAST(tmp);
+				root->lhs = root->lhs->lhs;
+				return;
+			}
+		}
+		if (root->lhs->kind == MUL && root->rhs->kind == MUL) {
+			int res = -1;
+			AST *ls, *rs;
+			int ok = 0;
+			if (isConstant(root->lhs->lhs) && isConstant(root->rhs->lhs)) {
+				res = getConstant(root->lhs->lhs) * getConstant(root->rhs->lhs);
+				ls = root->lhs->rhs, rs = root->rhs->rhs;
+				ok = 1;
+			} else if (isConstant(root->lhs->lhs) && isConstant(root->rhs->rhs)) {
+				res = getConstant(root->lhs->lhs) * getConstant(root->rhs->rhs);
+				ls = root->lhs->rhs, rs = root->rhs->lhs;
+				ok = 1;
+			} else if (isConstant(root->lhs->rhs) && isConstant(root->rhs->lhs)) {
+				res = getConstant(root->lhs->rhs) * getConstant(root->rhs->lhs);
+				ls = root->lhs->lhs, rs = root->rhs->rhs;
+				ok = 1;
+			} else if (isConstant(root->lhs->rhs) && isConstant(root->rhs->rhs)) {
+				res = getConstant(root->lhs->rhs) * getConstant(root->rhs->rhs);
+				ls = root->lhs->lhs, rs = root->rhs->lhs;
+				ok = 1;
+			}
+			if (ok) {
+				AST *tmp = root->lhs;
+				root->lhs = newConstantAST(res);
+				free(tmp);
+				root->rhs = new_AST(ADD, 0);
+				root->rhs->lhs = ls;
+				root->rhs->rhs = rs;
+				return;
+			}
+		}
+	}
+	if (root->kind == SUB) {
+		if (isConstant(root->lhs) && isConstant(root->rhs)) {
+			AST *tmp = root;
+			root = newConstantAST(getConstant(root->lhs) - getConstant(root->rhs));
+			freeAST(tmp);
+			return;
+		}
+		if (isConstant(root->lhs) && getConstant(root->lhs) == 0) {
+			AST *tmp = root;
+			root = new_AST(MINUS, 0);
+			root->mid = tmp->rhs;
+			freeAST(tmp->lhs);
+			free(tmp);
+			return;
+		}
+		if (isConstant(root->rhs) && getConstant(root->rhs) == 0) {
+			AST *tmp = root;
+			root = root->lhs;
+			freeAST(tmp->rhs);
+			free(tmp);
+			return;
+		}
+		if (root->lhs->kind == IDENTIFIER && root->rhs->kind == IDENTIFIER) {
+			if (root->lhs->val == root->rhs->val) {
+				AST *tmp = root;
+				root = newConstantAST(0);
+				freeAST(tmp);
+				return;
+			}
+		}
+	}
+	if (root->kind == DIV) {
+		if (isConstant(root->lhs) && isConstant(root->rhs)) {
+			AST *tmp = root;
+			root = newConstantAST(getConstant(root->lhs) / getConstant(root->rhs));
+			freeAST(tmp);
+			return;
+		}
+		if (isConstant(root->lhs) && getConstant(root->lhs) == 0) {
+			AST *tmp = root;
+			root = newConstantAST(0);
+			freeAST(tmp);
+			return;
+		}
+		if (isConstant(root->rhs) && getConstant(root->rhs) == 0) {
+			err("Division by zero!")
+		}
+		if (root->lhs->kind == IDENTIFIER && root->rhs->kind == IDENTIFIER) {
+			if (root->lhs->val == root->rhs->val) {
+				AST *tmp = root;
+				root = newConstantAST(1);
+				freeAST(tmp);
+				return;
+			}
+		}
+	}
+	if (root->kind == REM) {
+		if (isConstant(root->lhs) && isConstant(root->rhs)) {
+			AST *tmp = root;
+			root = newConstantAST(getConstant(root->lhs) % getConstant(root->rhs));
+			freeAST(tmp);
+			return;
+		}
+		if ((isConstant(root->lhs) && getConstant(root->lhs) == 0) ||
+			(isConstant(root->rhs) && getConstant(root->rhs) == 1)) {
+			AST *tmp = root;
+			root = newConstantAST(0);
+			freeAST(tmp);
+			return;
+		}
+		if (root->lhs->kind == IDENTIFIER && root->rhs->kind == IDENTIFIER) {
+			if (root->lhs->val == root->rhs->val) {
+				AST *tmp = root;
+				root = newConstantAST(0);
+				freeAST(tmp);
+				return;
+			}
+		}
+	}
 }
 
 int DONT_LOAD = 0;
