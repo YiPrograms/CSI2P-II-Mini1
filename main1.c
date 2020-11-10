@@ -288,10 +288,13 @@ AST *parse(Token *arr, int l, int r, GrammarState S) {
 		case UNARY_EXPR:
 			// TODO: Implement UNARY_EXPR.
 			// hint: Take POSTFIX_EXPR as reference.
-			if (arr[l].kind == PREINC || arr[l].kind == PREDEC ||
-				arr[l].kind == PLUS || arr[l].kind == MINUS) {
+			if (arr[l].kind == PREINC || arr[l].kind == PREDEC || arr[l].kind == MINUS) {
 				now = new_AST(arr[l].kind, 0);
 				now->mid = parse(arr, l + 1, r, UNARY_EXPR);
+				return now;
+			}
+			if (arr[l].kind == PLUS) {
+				now = parse(arr, l + 1, r, UNARY_EXPR);
 				return now;
 			}
 			return parse(arr, l, r, POSTFIX_EXPR);
@@ -305,8 +308,7 @@ AST *parse(Token *arr, int l, int r, GrammarState S) {
 			return parse(arr, l, r, PRI_EXPR);
 		case PRI_EXPR:
 			if (findNextSection(arr, l, r, condRPAR) == r) {
-				now = new_AST(LPAR, 0);
-				now->mid = parse(arr, l + 1, r - 1, EXPR);
+				now = parse(arr, l + 1, r - 1, EXPR);
 				return now;
 			}
 			if (l == r) {
@@ -513,10 +515,6 @@ int codegen(AST *root) {
 
 		case CONSTANT:
 			return root->val;
-
-		case LPAR:
-		case PLUS:
-			return codegen(root->mid);
 
 		case MINUS:
 			r = codegen(root->mid);
