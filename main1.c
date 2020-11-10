@@ -439,8 +439,12 @@ int codegen(AST *root) {
 				switch (root->kind) {
 					case ADD:
 						return l + r;
-					case SUB:
-						return l - r;
+					case SUB: // May become negative!
+						if (l - r >= 0)
+							return l - r;
+						AST *tmp = new_AST(MINUS, 0);
+						tmp->mid = new_AST(CONSTANT, -(l - r));
+						return codegen(tmp);
 					case MUL:
 						return l * r;
 					case DIV:
@@ -470,21 +474,6 @@ int codegen(AST *root) {
 
 		case PREINC:
 		case PREDEC:
-			l = codegen(root->mid);
-
-			if (l >= 0 || registers[-l] != IDEN) {
-				err("INC/DEC should follow an identifier!")
-			}
-
-			addISA(ADD, l, l, 1);
-			for (int i = 0; i < 3; i++) {
-				if (identifiers[i] == -l) {
-					modified[i] = 1;
-					break;
-				}
-			}
-			return l;
-			
 		case POSTINC:
 		case POSTDEC:
 			l = codegen(root->mid);
@@ -492,10 +481,16 @@ int codegen(AST *root) {
 			if (l >= 0 || registers[-l] != IDEN) {
 				err("INC/DEC should follow an identifier!")
 			}
-			dest = findNewRegister();
-			registers[-dest] = USED;
-			addISA(ADD, dest, 0, l);
-			addISA(ADD, l, l, 1);
+
+			if (root->kind == POSTINC || root->kind == POSTDEC) {
+				dest = findNewRegister();
+				registers[-dest] = USED;
+				addISA(ADD, dest, 0, l);
+			} else {
+				dest = l;
+			}
+
+			addISA(root->kind == PREINC? ADD: SUB, l, l, 1);
 			for (int i = 0; i < 3; i++) {
 				if (identifiers[i] == -l) {
 					modified[i] = 1;
