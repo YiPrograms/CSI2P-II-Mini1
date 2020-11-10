@@ -108,7 +108,7 @@ void printASM(int start);
 int isConstant(AST *root);
 int getConstant(AST *root);
 AST *newConstantAST(int val);
-void simplifyTree(AST *root);
+AST *simplifyTree(AST *root);
 
 /// debug interfaces
 
@@ -133,6 +133,8 @@ int identifiers[3] = {-1, -1, -1};
 // Track modified registers
 int modified[3] = {0, 0, 0};
 
+AST *rooot;
+
 int main(int argc, char **argv) {
 	if (argc == 2)
 		DEBUG = 1;
@@ -141,7 +143,7 @@ int main(int argc, char **argv) {
 		size_t len = token_list_to_arr(&content);
 		// if (DEBUG)
 		// 	token_print(content, len);
-		AST *ast_root = parser(content, len);
+		AST *ast_root = rooot = parser(content, len);
 		if (DEBUG)
 			AST_print(ast_root);
 
@@ -420,34 +422,34 @@ AST *newConstantAST(int val) {
 	return tmp;
 }
 
-void simplifyTree(AST *root) {
+AST *simplifyTree(AST *root) {
 	if (root == NULL)
-		return;
+		return NULL;
 
-	simplifyTree(root->lhs);
-	simplifyTree(root->mid);
-	simplifyTree(root->rhs);
+	root->lhs = simplifyTree(root->lhs);
+	root->mid = simplifyTree(root->mid);
+	root->rhs = simplifyTree(root->rhs);
 
 	if (root->kind == ADD) {
 		if (isConstant(root->lhs) && isConstant(root->rhs)) {
 			AST *tmp = root;
 			root = newConstantAST(getConstant(root->lhs) + getConstant(root->rhs));
 			freeAST(tmp);
-			return;
+			return root;
 		}
 		if (isConstant(root->lhs) && getConstant(root->lhs) == 0) {
 			AST *tmp = root;
 			root = root->rhs;
 			freeAST(tmp->lhs);
 			free(tmp);
-			return;
+			return root;
 		}
 		if (isConstant(root->rhs) && getConstant(root->rhs) == 0) {
 			AST *tmp = root;
 			root = root->lhs;
 			freeAST(tmp->rhs);
 			free(tmp);
-			return;
+			return root;
 		}
 		if (isConstant(root->lhs) && root->rhs->kind == ADD) {
 			if (isConstant(root->rhs->lhs)) {
@@ -455,14 +457,14 @@ void simplifyTree(AST *root) {
 				root->lhs = newConstantAST(getConstant(root->lhs) + getConstant(root->rhs->lhs));
 				freeAST(tmp);
 				root->rhs = root->rhs->rhs;
-				return;
+				return root;
 			}
 			if (isConstant(root->rhs->rhs)) {
 				AST *tmp = root->lhs;
 				root->lhs = newConstantAST(getConstant(root->lhs) + getConstant(root->rhs->rhs));
 				freeAST(tmp);
 				root->rhs = root->rhs->lhs;
-				return;
+				return root;
 			}
 		}
 		if (isConstant(root->rhs) && root->lhs->kind == ADD) {
@@ -471,14 +473,14 @@ void simplifyTree(AST *root) {
 				root->rhs = newConstantAST(getConstant(root->rhs) + getConstant(root->lhs->lhs));
 				freeAST(tmp);
 				root->lhs = root->lhs->rhs;
-				return;
+				return root;
 			}
 			if (isConstant(root->lhs->rhs)) {
 				AST *tmp = root->rhs;
 				root->rhs = newConstantAST(getConstant(root->rhs) + getConstant(root->lhs->rhs));
 				freeAST(tmp);
 				root->lhs = root->lhs->lhs;
-				return;
+				return root;
 			}
 		}
 		if (root->lhs->kind == ADD && root->rhs->kind == ADD) {
@@ -509,7 +511,7 @@ void simplifyTree(AST *root) {
 				root->rhs = new_AST(ADD, 0);
 				root->rhs->lhs = ls;
 				root->rhs->rhs = rs;
-				return;
+				return root;
 			}
 		}
 	}
@@ -518,28 +520,28 @@ void simplifyTree(AST *root) {
 			AST *tmp = root;
 			root = newConstantAST(getConstant(root->lhs) * getConstant(root->rhs));
 			freeAST(tmp);
-			return;
+			return root;
 		}
 		if ((isConstant(root->lhs) && getConstant(root->lhs) == 0) ||
 			(isConstant(root->rhs) && getConstant(root->rhs) == 0)) {
 			AST *tmp = root;
 			root = newConstantAST(0);
 			freeAST(tmp);
-			return;
+			return root;
 		}
 		if (isConstant(root->lhs) && getConstant(root->lhs) == 1) {
 			AST *tmp = root;
 			root = root->rhs;
 			freeAST(tmp->lhs);
 			free(tmp);
-			return;
+			return root;
 		}
 		if (isConstant(root->rhs) && getConstant(root->rhs) == 1) {
 			AST *tmp = root;
 			root = root->lhs;
 			freeAST(tmp->rhs);
 			free(tmp);
-			return;
+			return root;
 		}
 		if (isConstant(root->lhs) && getConstant(root->lhs) == -1) {
 			AST *tmp = root;
@@ -547,7 +549,7 @@ void simplifyTree(AST *root) {
 			root->mid = tmp->rhs;
 			freeAST(tmp->lhs);
 			free(tmp);
-			return;
+			return root;
 		}
 		if (isConstant(root->rhs) && getConstant(root->rhs) == -1) {
 			AST *tmp = root;
@@ -555,7 +557,7 @@ void simplifyTree(AST *root) {
 			root->mid = tmp->lhs;
 			freeAST(tmp->rhs);
 			free(tmp);
-			return;
+			return root;
 		}
 		if (isConstant(root->lhs) && root->rhs->kind == MUL) {
 			if (isConstant(root->rhs->lhs)) {
@@ -563,14 +565,14 @@ void simplifyTree(AST *root) {
 				root->lhs = newConstantAST(getConstant(root->lhs) * getConstant(root->rhs->lhs));
 				freeAST(tmp);
 				root->rhs = root->rhs->rhs;
-				return;
+				return root;
 			}
 			if (isConstant(root->rhs->rhs)) {
 				AST *tmp = root->lhs;
 				root->lhs = newConstantAST(getConstant(root->lhs) * getConstant(root->rhs->rhs));
 				freeAST(tmp);
 				root->rhs = root->rhs->lhs;
-				return;
+				return root;
 			}
 		}
 		if (isConstant(root->rhs) && root->lhs->kind == MUL) {
@@ -579,14 +581,14 @@ void simplifyTree(AST *root) {
 				root->rhs = newConstantAST(getConstant(root->rhs) * getConstant(root->lhs->lhs));
 				freeAST(tmp);
 				root->lhs = root->lhs->rhs;
-				return;
+				return root;
 			}
 			if (isConstant(root->lhs->rhs)) {
 				AST *tmp = root->rhs;
 				root->rhs = newConstantAST(getConstant(root->rhs) * getConstant(root->lhs->rhs));
 				freeAST(tmp);
 				root->lhs = root->lhs->lhs;
-				return;
+				return root;
 			}
 		}
 		if (root->lhs->kind == MUL && root->rhs->kind == MUL) {
@@ -617,7 +619,7 @@ void simplifyTree(AST *root) {
 				root->rhs = new_AST(ADD, 0);
 				root->rhs->lhs = ls;
 				root->rhs->rhs = rs;
-				return;
+				return root;
 			}
 		}
 	}
@@ -626,7 +628,7 @@ void simplifyTree(AST *root) {
 			AST *tmp = root;
 			root = newConstantAST(getConstant(root->lhs) - getConstant(root->rhs));
 			freeAST(tmp);
-			return;
+			return root;
 		}
 		if (isConstant(root->lhs) && getConstant(root->lhs) == 0) {
 			AST *tmp = root;
@@ -634,21 +636,21 @@ void simplifyTree(AST *root) {
 			root->mid = tmp->rhs;
 			freeAST(tmp->lhs);
 			free(tmp);
-			return;
+			return root;
 		}
 		if (isConstant(root->rhs) && getConstant(root->rhs) == 0) {
 			AST *tmp = root;
 			root = root->lhs;
 			freeAST(tmp->rhs);
 			free(tmp);
-			return;
+			return root;
 		}
 		if (root->lhs->kind == IDENTIFIER && root->rhs->kind == IDENTIFIER) {
 			if (root->lhs->val == root->rhs->val) {
 				AST *tmp = root;
 				root = newConstantAST(0);
 				freeAST(tmp);
-				return;
+				return root;
 			}
 		}
 	}
@@ -657,13 +659,13 @@ void simplifyTree(AST *root) {
 			AST *tmp = root;
 			root = newConstantAST(getConstant(root->lhs) / getConstant(root->rhs));
 			freeAST(tmp);
-			return;
+			return root;
 		}
 		if (isConstant(root->lhs) && getConstant(root->lhs) == 0) {
 			AST *tmp = root;
 			root = newConstantAST(0);
 			freeAST(tmp);
-			return;
+			return root;
 		}
 		if (isConstant(root->rhs) && getConstant(root->rhs) == 0) {
 			err("Division by zero!")
@@ -673,7 +675,7 @@ void simplifyTree(AST *root) {
 				AST *tmp = root;
 				root = newConstantAST(1);
 				freeAST(tmp);
-				return;
+				return root;
 			}
 		}
 	}
@@ -682,24 +684,34 @@ void simplifyTree(AST *root) {
 			AST *tmp = root;
 			root = newConstantAST(getConstant(root->lhs) % getConstant(root->rhs));
 			freeAST(tmp);
-			return;
+			return root;
 		}
 		if ((isConstant(root->lhs) && getConstant(root->lhs) == 0) ||
 			(isConstant(root->rhs) && getConstant(root->rhs) == 1)) {
 			AST *tmp = root;
 			root = newConstantAST(0);
 			freeAST(tmp);
-			return;
+			return root;
 		}
 		if (root->lhs->kind == IDENTIFIER && root->rhs->kind == IDENTIFIER) {
 			if (root->lhs->val == root->rhs->val) {
 				AST *tmp = root;
 				root = newConstantAST(0);
 				freeAST(tmp);
-				return;
+				return root;
 			}
 		}
 	}
+	if (root->kind == MINUS) {
+		if (root->mid->kind == MINUS) {
+			AST *tmp = root;
+			root = root->mid->mid;
+			free(tmp);
+			return root;
+		}
+	}
+
+	return root;
 }
 
 int DONT_LOAD = 0;
