@@ -138,15 +138,14 @@ int main(int argc, char **argv) {
 			AST_print(ast_root);
 		semantic_check(ast_root);
 		codegen(ast_root);
-		if (DEBUG)
-			printRegisters();
+		freeRegisters();
 		if (DEBUG) {
 			printASM(last_len);
 			last_len = code_len;
+			printRegisters();
 		}
 		free(content);
 		freeAST(ast_root);
-		freeRegisters();
 	}
 	storeValues();
 	printASM(0);
@@ -471,9 +470,39 @@ int codegen(AST *root) {
 
 		case PREINC:
 		case PREDEC:
+			l = codegen(root->mid);
+
+			if (l >= 0 || registers[-l] != IDEN) {
+				err("INC/DEC should follow an identifier!")
+			}
+
+			addISA(ADD, l, l, 1);
+			for (int i = 0; i < 3; i++) {
+				if (identifiers[i] == -l) {
+					modified[i] = 1;
+					break;
+				}
+			}
+			return l;
+			
 		case POSTINC:
 		case POSTDEC:
+			l = codegen(root->mid);
 
+			if (l >= 0 || registers[-l] != IDEN) {
+				err("INC/DEC should follow an identifier!")
+			}
+			dest = findNewRegister();
+			registers[-dest] = USED;
+			addISA(ADD, dest, 0, l);
+			addISA(ADD, l, l, 1);
+			for (int i = 0; i < 3; i++) {
+				if (identifiers[i] == -l) {
+					modified[i] = 1;
+					break;
+				}
+			}
+			return dest;
 
 		case IDENTIFIER:
 			if (identifiers[root->val - 'x'] != -1)
