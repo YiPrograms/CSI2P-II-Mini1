@@ -59,7 +59,7 @@ typedef struct ISAUnit {
 	exit(0);\
 }
 // You may set DEBUG=1 to debug. Remember setting back to 0 before submit.
-#define DEBUG 1
+int DEBUG = 0;
 // Split the input char array into token linked list.
 Token *lexer(const char *in);
 // Create a new token.
@@ -94,10 +94,12 @@ void addISA(Kind ins, int o1, int o2, int o3);
 void printISA(ISA *isa);
 // Find a not used register
 int findNewRegister();
+// Free used registers (not identifiers)
+void freeRegisters();
 // Store modified identifiers to memory
 void storeValues();
-// Print final ASM code
-void printASM();
+// Print ASM code starting from s
+void printASM(int start);
 
 
 /// debug interfaces
@@ -113,6 +115,7 @@ char input[MAX_LENGTH];
 
 ISA code[MAX_LENGTH * 20];
 int code_len = 0;
+int last_len = 0;
 
 // Register state, 0: free, 1: used, 2: identifier
 // Stores register from 1 to 256, deduct 1 when printing
@@ -122,7 +125,9 @@ int identifiers[3] = {-1, -1, -1};
 // Track modified registers
 int modified[3] = {0, 0, 0};
 
-int main() {
+int main(int argc, char **argv) {
+	if (argc == 2)
+		DEBUG = 1;
 	while (fgets(input, MAX_LENGTH, stdin) != NULL) {
 		Token *content = lexer(input);
 		size_t len = token_list_to_arr(&content);
@@ -135,11 +140,16 @@ int main() {
 		codegen(ast_root);
 		if (DEBUG)
 			printRegisters();
+		if (DEBUG) {
+			printASM(last_len);
+			last_len = code_len;
+		}
 		free(content);
 		freeAST(ast_root);
+		freeRegisters();
 	}
 	storeValues();
-	printASM();
+	printASM(0);
 	return 0;
 }
 
@@ -374,25 +384,17 @@ void semantic_check(AST *now) {
 
 int DONT_LOAD = 0;
 
-// Returns value if >0, register if <0 (-1 ~ -256)
+// Returns value if >0, register if <0 (-1 ~ -256) or NULLREG
 int codegen(AST *root) {
 	// TODO: Implement your codegen in your own way.
 	// You may modify the function parameter or the return type, even the whole structure as you wish.
 
-	if (root == NULL) {
-		err("NULL AST Node!")
-		exit(0);
-	}
+	if (root == NULL)
+		return NULLREG;
 
 	int l, r, dest;
 	switch (root->kind) {
 		case ASSIGN:
-			DONT_LOAD = 1;
-			l = codegen(root->lhs);
-			DONT_LOAD = 0;
-			if (l >= 0 || (l > NULLREG && registers[-l] != IDEN)) {
-				err("Lvalue should be an identifier!")
-			}
 			r = codegen(root->rhs);
 			//printf("Rvalue: %d\n", r);
 			if (r >= 0 || registers[-r] == IDEN) {
@@ -400,6 +402,14 @@ int codegen(AST *root) {
 				addISA(ADD, dest, 0, r);
 			} else {
 				dest = r;
+			}
+
+			DONT_LOAD = 1;
+			l = codegen(root->lhs);
+			DONT_LOAD = 0;
+
+			if (l >= 0 || (l > NULLREG && registers[-l] != IDEN)) {
+				err("Lvalue should be an identifier!")
 			}
 
 			if (l > NULLREG) {
@@ -511,6 +521,12 @@ int findNewRegister() {
 	return NULLREG; // No registers left
 }
 
+void freeRegisters() {
+	for (int i = 1; i <= 256; i++)
+		if (registers[i] == USED)
+			registers[i] = FREE;
+}
+
 void addISA(Kind ins, int o1, int o2, int o3) {
 	ISA *new = &code[code_len++];
 	new->ins = ins;
@@ -551,21 +567,18 @@ void addISA(Kind ins, int o1, int o2, int o3) {
 			new->o3 = o3;
 		}
 	}
-	if (DEBUG) {
-		printISA(new);
-	}
 }
 
 void storeValues() {
 	for (int i = 0; i < 3; i++) {
 		if (modified[i]) {
-			addISA(STORE, 4 * i, -registers[i], 0);
+			addISA(STORE, 4 * i, -identifiers[i], 0);
 		}
 	}
 }
 
-void printASM() {
-	for (int i = 0; i < code_len; i++) {
+void printASM(int start) {
+	for (int i = start; i < code_len; i++) {
 		printISA(&code[i]);
 	}
 }
