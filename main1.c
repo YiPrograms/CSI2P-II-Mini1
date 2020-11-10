@@ -9,12 +9,21 @@ For the language grammar, please refer to Grammar section on the github page:
 */
 
 #define MAX_LENGTH 200
+#define NULLREG -300
 typedef enum {
-	ASSIGN, ADD, SUB, MUL, DIV, REM, PREINC, PREDEC, POSTINC, POSTDEC, IDENTIFIER, CONSTANT, LPAR, RPAR, PLUS, MINUS
+	ASSIGN, ADD, SUB, MUL, DIV, REM, PREINC, PREDEC, POSTINC, POSTDEC, IDENTIFIER, CONSTANT, LPAR, RPAR, PLUS, MINUS, LOAD, STORE
 } Kind;
 typedef enum {
 	STMT, EXPR, ASSIGN_EXPR, ADD_EXPR, MUL_EXPR, UNARY_EXPR, POSTFIX_EXPR, PRI_EXPR
 } GrammarState;
+
+typedef enum {
+	EMPTY, REGISTER, VALUE, ADDRESS
+} OperandType;
+
+typedef enum {
+	FREE, USED, IDEN
+} RegisterState;
 typedef struct TokenUnit {
 	Kind kind;
 	int val; // record the integer value or variable name
@@ -25,6 +34,18 @@ typedef struct ASTUnit {
 	int val; // record the integer value or variable name
 	struct ASTUnit *lhs, *mid, *rhs;
 } AST;
+
+typedef struct ISAUnit {
+	Kind ins; // Reuse Kind enum
+	OperandType o1_type;
+	unsigned int o1; // Register from 1 to 256
+	OperandType o2_type;
+	unsigned int o2;
+	OperandType o3_type;
+	unsigned int o3;
+} ISA;
+
+
 
 /// utility interfaces
 
@@ -64,9 +85,20 @@ int condRPAR(Kind kind);
 // Check if the AST is semantically right. This function will call err() automatically if check failed.
 void semantic_check(AST *now);
 // Generate ASM code.
-void codegen(AST *root);
+int codegen(AST *root);
 // Free the whole AST.
 void freeAST(AST *now);
+// Add ASM code
+void addISA(Kind ins, int o1, int o2, int o3);
+// Print single instruction
+void printISA(ISA *isa);
+// Find a not used register
+int findNewRegister();
+// Store modified identifiers to memory
+void storeValues();
+// Print final ASM code
+void printASM();
+
 
 /// debug interfaces
 
@@ -74,21 +106,40 @@ void freeAST(AST *now);
 void token_print(Token *in, size_t len);
 // Print AST tree.
 void AST_print(AST *head);
+// Print register status
+void printRegisters();
 
 char input[MAX_LENGTH];
+
+ISA code[MAX_LENGTH * 20];
+int code_len = 0;
+
+// Register state, 0: free, 1: used, 2: identifier
+// Stores register from 1 to 256, deduct 1 when printing
+int registers[260];
+// Registers of the three identifiers, 1 ~ 256
+int identifiers[3] = {-1, -1, -1};
+// Track modified registers
+int modified[3] = {0, 0, 0};
 
 int main() {
 	while (fgets(input, MAX_LENGTH, stdin) != NULL) {
 		Token *content = lexer(input);
 		size_t len = token_list_to_arr(&content);
-		token_print(content, len);
+		// if (DEBUG)
+		// 	token_print(content, len);
 		AST *ast_root = parser(content, len);
-		AST_print(ast_root);
+		if (DEBUG)
+			AST_print(ast_root);
 		semantic_check(ast_root);
-		// codegen(ast_root);
+		codegen(ast_root);
+		if (DEBUG)
+			printRegisters();
 		free(content);
 		freeAST(ast_root);
 	}
+	storeValues();
+	printASM();
 	return 0;
 }
 
@@ -230,7 +281,7 @@ AST *parse(Token *arr, int l, int r, GrammarState S) {
 			// hint: Take POSTFIX_EXPR as reference.
 			if (arr[l].kind == PREINC || arr[l].kind == PREDEC ||
 				arr[l].kind == PLUS || arr[l].kind == MINUS) {
-				now = new_AST(arr[r].kind, 0);
+				now = new_AST(arr[l].kind, 0);
 				now->mid = parse(arr, l + 1, r, UNARY_EXPR);
 				return now;
 			}
@@ -321,32 +372,247 @@ void semantic_check(AST *now) {
 	semantic_check(now->rhs);
 }
 
-void codegen(AST *root) {
+int DONT_LOAD = 0;
+
+// Returns value if >0, register if <0 (-1 ~ -256)
+int codegen(AST *root) {
 	// TODO: Implement your codegen in your own way.
 	// You may modify the function parameter or the return type, even the whole structure as you wish.
 
-	if (root == NULL)
-		return;
+	if (root == NULL) {
+		err("NULL AST Node!")
+		exit(0);
+	}
 
+	int l, r, dest;
 	switch (root->kind) {
 		case ASSIGN:
+			DONT_LOAD = 1;
+			l = codegen(root->lhs);
+			DONT_LOAD = 0;
+			if (l >= 0 || (l > NULLREG && registers[-l] != IDEN)) {
+				err("Lvalue should be an identifier!")
+			}
+			r = codegen(root->rhs);
+			//printf("Rvalue: %d\n", r);
+			if (r >= 0 || registers[-r] == IDEN) {
+				dest = findNewRegister();
+				addISA(ADD, dest, 0, r);
+			} else {
+				dest = r;
+			}
+
+			if (l > NULLREG) {
+				for (int i = 0; i < 3; i++) {
+					if (identifiers[i] == -l) {
+						registers[identifiers[i]] = FREE;
+						identifiers[i] = -dest;
+						modified[i] = 1;
+						break;
+					}
+				}
+			} else {
+				identifiers[-(l - NULLREG)] = -dest;
+				modified[-(l - NULLREG)] = 1;
+			}
+
+			registers[-dest] = IDEN;
+			return dest;
+
 		case ADD:
 		case SUB:
 		case MUL:
 		case DIV:
 		case REM:
+			l = codegen(root->lhs);
+			r = codegen(root->rhs);
+			if (l >= 0 && r >= 0) {
+				switch (root->kind) {
+					case ADD:
+						return l + r;
+					case SUB:
+						return l - r;
+					case MUL:
+						return l * r;
+					case DIV:
+						return l / r;
+					case REM:
+						return l % r;
+					default:
+						err("Codegen flow broken!")
+				}
+			}
+
+			if (l < 0 && registers[-l] != IDEN)
+				dest = l;
+			else if (r < 0 && registers[-r] != IDEN)
+				dest = r;
+			else 
+				dest = findNewRegister();
+
+			addISA(root->kind, dest, l, r);
+
+			if (l < 0 && registers[-l] != IDEN)
+				registers[-l] = FREE;
+			if (r < 0 && registers[-r] != IDEN)
+				registers[-r] = FREE;
+			registers[-dest] = USED;
+			return dest;
+
 		case PREINC:
 		case PREDEC:
 		case POSTINC:
 		case POSTDEC:
+
+
 		case IDENTIFIER:
+			if (identifiers[root->val - 'x'] != -1)
+				return -identifiers[root->val - 'x'];
+			if (DONT_LOAD)
+				return NULLREG - (root->val - 'x');
+			dest = findNewRegister();
+			registers[-dest] = IDEN;
+			identifiers[root->val - 'x'] = -dest;
+			addISA(LOAD, dest, 4 * (root->val - 'x'), 0);
+			// printf("Loaded %c into r%d\n", root->val, dest);
+			return dest;
+
 		case CONSTANT:
+			return root->val;
+
 		case LPAR:
-		case RPAR:
 		case PLUS:
+			return codegen(root->mid);
+
 		case MINUS:
+			r = codegen(root->mid);
+			if (r >= 0 || registers[-r] == IDEN) {
+				dest = findNewRegister();
+				registers[-dest] = USED;
+			} else {
+				dest = r;
+			}
+
+			addISA(SUB, dest, 0, r);
+			return dest;
+
+		default:
+			err("AST kind not found!")
 	}
 	
+}
+
+// Returns (-1 ~ -256)
+int findNewRegister() {
+	for (int i = 1; i <= 256; i++)
+		if (registers[i] == FREE)
+			return -i;
+	
+	return NULLREG; // No registers left
+}
+
+void addISA(Kind ins, int o1, int o2, int o3) {
+	ISA *new = &code[code_len++];
+	new->ins = ins;
+	if (ins == LOAD || ins == STORE) {
+		if (o1 < 0) {
+			new->o1_type = REGISTER;
+			new->o1 = -o1;
+		} else {
+			new->o1_type = ADDRESS;
+			new->o1 = o1;
+		}
+		if (o2 < 0) {
+			new->o2_type = REGISTER;
+			new->o2 = -o2;
+		} else {
+			new->o2_type = ADDRESS;
+			new->o2 = o2;
+		}
+	} else {
+		if (o1 < 0) {
+			new->o1_type = REGISTER;
+			new->o1 = -o1;
+		} else {
+			err("Destination must be a register!")
+		}
+		if (o2 < 0) {
+			new->o2_type = REGISTER;
+			new->o2 = -o2;
+		} else {
+			new->o2_type = VALUE;
+			new->o2 = o2;
+		}
+		if (o3 < 0) {
+			new->o3_type = REGISTER;
+			new->o3 = -o3;
+		} else {
+			new->o3_type = VALUE;
+			new->o3 = o3;
+		}
+	}
+	if (DEBUG) {
+		printISA(new);
+	}
+}
+
+void storeValues() {
+	for (int i = 0; i < 3; i++) {
+		if (modified[i]) {
+			addISA(STORE, 4 * i, -registers[i], 0);
+		}
+	}
+}
+
+void printASM() {
+	for (int i = 0; i < code_len; i++) {
+		printISA(&code[i]);
+	}
+}
+
+void printISA(ISA *isa) {
+	const static char insName[][10] = {
+		"UNKNOWN", "add", "sub", "mul", "div", "rem", "UNKNOWN", "UNKNOWN", "UNKNOWN", "UNKNOWN", "UNKNOWN", "UNKNOWN", "UNKNOWN", "UNKNOWN", "UNKNOWN", "UNKNOWN", "load", "store"
+	};
+	const static char format_memory[] = "%s %s %s\n";
+	const static char format_arithmetic[] = "%s %s %s %s\n";
+	const static char format_register[] = "r%u";
+	const static char format_address[] = "[%u]";
+	const static char format_value[] = "%u";
+	static char op1[8], op2[8], op3[8];
+
+	if (isa->ins == LOAD) {
+		sprintf(op1, format_register, isa->o1 - 1);
+		sprintf(op2, format_address, isa->o2);
+		printf(format_memory, insName[LOAD], op1, op2);
+	} else if (isa->ins == STORE) {
+		sprintf(op1, format_address, isa->o1);
+		sprintf(op2, format_register, isa->o2 - 1);
+		printf(format_memory, insName[STORE], op1, op2);
+	} else {
+		sprintf(op1, format_register, isa->o1 - 1);
+		if (isa->o2_type == REGISTER)
+			sprintf(op2, format_register, isa->o2 - 1);
+		else
+			sprintf(op2, format_value, isa->o2);
+		if (isa->o3_type == REGISTER)
+			sprintf(op3, format_register, isa->o3 - 1);
+		else
+			sprintf(op3, format_value, isa->o3);
+		
+		printf(format_arithmetic, insName[isa->ins], op1, op2, op3);
+	}
+}
+
+void printRegisters() {
+	for (int i = 1; i <= 256; i++)
+		if (registers[i] != FREE)
+			printf("r%d\t", i - 1);
+	printf("\n");
+	for (int i = 1; i <= 256; i++)
+		if (registers[i] != FREE)
+			printf("%d\t", registers[i]);
+	printf("\n");
 }
 
 void freeAST(AST *now) {
