@@ -47,6 +47,7 @@ typedef struct ISAUnit {
 	unsigned int o2;
 	OperandType o3_type;
 	unsigned int o3;
+	int redundant;
 } ISA;
 
 
@@ -115,6 +116,9 @@ int checkAssign(AST *root);
 // If there are no assigns, we can just check for INC/DECs
 void lazy_codegen(AST *root);
 
+void removeRedundantASM();
+void traceASM(int i, int r);
+
 /// debug interfaces
 
 // Print token array.
@@ -174,6 +178,7 @@ int main(int argc, char **argv) {
 		free(content);
 		freeAST(ast_root);
 	}
+	removeRedundantASM();
 	storeValues();
 	printASM(0);
 	return 0;
@@ -939,6 +944,7 @@ void freeRegisters() {
 void addISA(Kind ins, int o1, int o2, int o3) {
 	ISA *new = &code[code_len++];
 	new->ins = ins;
+	new->redundant = 1;
 	if (ins == LOAD || ins == STORE) {
 		if (o1 < 0) {
 			new->o1_type = REGISTER;
@@ -954,6 +960,8 @@ void addISA(Kind ins, int o1, int o2, int o3) {
 			new->o2_type = ADDRESS;
 			new->o2 = o2;
 		}
+		new->o3_type = EMPTY;
+		new->o3 = 0;
 	} else {
 		if (o1 < 0) {
 			new->o1_type = REGISTER;
@@ -978,6 +986,30 @@ void addISA(Kind ins, int o1, int o2, int o3) {
 	}
 }
 
+void traceASM(int i, int r) {
+	while (i >= 0 && code[i].o1 != r)
+		i--;
+
+	if (i < 0)
+		return;
+	
+	code[i].redundant = 0;
+
+	if (code[i].o2_type == REGISTER)
+		traceASM(i - 1, code[i].o2);
+	if (code[i].o3_type == REGISTER)
+		traceASM(i - 1, code[i].o3);
+}
+
+void removeRedundantASM() {
+	for (int i = 0; i < 3; i++) {
+		if (modified[i]) {
+			// addISA(STORE, 4 * i, -identifiers[i], 0);
+			traceASM(code_len - 1, identifiers[i]);
+		}
+	}
+}
+
 void storeValues() {
 	for (int i = 0; i < 3; i++) {
 		if (modified[i]) {
@@ -988,6 +1020,8 @@ void storeValues() {
 
 void printASM(int start) {
 	for (int i = start; i < code_len; i++) {
+		if (code[i].ins != STORE && code[i].redundant)
+			continue;
 		printISA(&code[i]);
 	}
 }

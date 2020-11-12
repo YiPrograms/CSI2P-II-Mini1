@@ -10,3 +10,4 @@ x=(-y*-y-(y*y-4*x*z))/(2*x*2*x)
 
 // 1770 cycle
 // With lazy codegen: 1280
+// Remove redundant: 1260
