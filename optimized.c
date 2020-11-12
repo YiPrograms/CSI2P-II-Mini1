@@ -48,6 +48,8 @@ typedef struct ISAUnit {
 	OperandType o3_type;
 	unsigned int o3;
 	int redundant;
+	int deleted;
+	int first_run, last_res, is_const;
 } ISA;
 
 
@@ -119,6 +121,10 @@ void lazy_codegen(AST *root);
 void removeRedundantASM();
 void traceASM(int i, int r);
 
+void loadArgs(ISA *isa, int* regs, int *l, int *r);
+void runASM(int* init);
+void constantFinding();
+
 /// debug interfaces
 
 // Print token array.
@@ -178,6 +184,8 @@ int main(int argc, char **argv) {
 		free(content);
 		freeAST(ast_root);
 	}
+	removeRedundantASM();
+	constantFinding();
 	removeRedundantASM();
 	storeValues();
 	printASM(0);
@@ -944,7 +952,6 @@ void freeRegisters() {
 void addISA(Kind ins, int o1, int o2, int o3) {
 	ISA *new = &code[code_len++];
 	new->ins = ins;
-	new->redundant = 1;
 	if (ins == LOAD || ins == STORE) {
 		if (o1 < 0) {
 			new->o1_type = REGISTER;
@@ -984,10 +991,17 @@ void addISA(Kind ins, int o1, int o2, int o3) {
 			new->o3 = o3;
 		}
 	}
+
+	new->redundant = 0;
+	new->deleted = 0;
+
+	new->last_res = -1;
+	new->is_const = 1;
+	new->first_run = 1;
 }
 
 void traceASM(int i, int r) {
-	while (i >= 0 && code[i].o1 != r)
+	while (i >= 0 && (code[i].deleted || code[i].o1 != r))
 		i--;
 
 	if (i < 0)
@@ -1002,10 +1016,131 @@ void traceASM(int i, int r) {
 }
 
 void removeRedundantASM() {
+	for (int i = 0; i < code_len; i++) {
+		if (!code[i].deleted && !(code[i].ins == STORE))
+			code[i].redundant = 1;
+	}
 	for (int i = 0; i < 3; i++) {
 		if (modified[i]) {
-			// addISA(STORE, 4 * i, -identifiers[i], 0);
 			traceASM(code_len - 1, identifiers[i]);
+		}
+	}
+	for (int i = 0; i < code_len; i++) {
+		if (!code[i].deleted && code[i].redundant)
+			code[i].deleted = 1;
+	}
+}
+
+void loadArgs(ISA *isa, int* regs, int *l, int *r) {
+	if (isa->o2_type == VALUE)
+		*l = isa->o2;
+	else
+		*l = regs[isa->o2];
+
+	if (isa->o3_type == VALUE)
+		*r = isa->o3;
+	else if (isa->o3_type == EMPTY)
+		*r = 0;
+	else
+		*r = regs[isa->o3];
+}
+
+void runASM(int* init) {
+	int regs[260];
+	memset(regs, 0, sizeof(regs));
+	for (int i = 0; i < code_len; i++) {
+		if (code[i].deleted)
+			continue;
+
+		if (code[i].ins == LOAD) {
+			regs[code[i].o1] = init[code[i].o2 / 4];
+		} else {
+			int l, r;
+			long long res;
+			loadArgs(&code[i], regs, &l, &r);
+			
+			if (code[i].ins == ADD)
+				res = l *1LL + r;
+			else if (code[i].ins == SUB)
+				res = l *1LL - r;
+			else if (code[i].ins == MUL)
+				res = l *1LL * r;
+			else if (code[i].ins == DIV) {
+				if (r == 0)
+					return;
+				res = l *1LL / r;
+			}
+			else if (code[i].ins == REM) {
+				if (r == 0)
+					return;
+				res = l *1LL % r;
+			}
+			else {
+				err("Broken!")
+			}
+			
+			if (res > 2147483647 || res < -2147483648)
+				return;
+			// printf("%lld\n", res);
+			regs[code[i].o1] = res;
+
+			if (!code[i].first_run && code[i].is_const && code[i].last_res != res)
+				code[i].is_const = 0;
+			code[i].first_run = 0;
+			code[i].last_res = res;
+		}
+	}
+}
+
+void constantFinding() {
+	for (int x = -100; x <= 100; x++) {
+		for (int y = -100; y <= 100; y++) {
+			for (int z = -100; z <= 100; z++) {
+				// printf("%d %d %d\r", x, y, z);
+				int init[] = {x, y, z};
+				runASM(init);
+				// return;
+			}
+		}
+	}
+
+	// for (int i = 0; i < code_len; i++) {
+	// 	if (code[i].redundant)
+	// 		continue;
+	// 	if (code[i].ins == LOAD || !code[i].is_const)
+	// 		printf("Not a const\n");
+	// 	else
+	// 		printf("Const: %d\n", code[i].last_res);
+		
+	// }
+
+	for (int i = 0; i < code_len; i++) {
+		if (code[i].deleted || code[i].ins == LOAD)
+			continue;
+		if (code[i].is_const) {
+			if (code[i].last_res >= 0) {
+				code[i].ins = ADD;
+				code[i].o2_type = code[i].o3_type = CONSTANT;
+				code[i].o2 = 0;
+				code[i].o3 = code[i].last_res;
+			} else {
+				code[i].ins = SUB;
+				code[i].o2_type = code[i].o3_type = CONSTANT;
+				code[i].o2 = 0;
+				code[i].o3 = -code[i].last_res;
+			}
+			
+
+			// for (int j = i + 1; j < code_len && !(code[j].o1_type == REGISTER && code[j].o1 == code[i].o1); j++) {
+			// 	if (code[i].o2_type == REGISTER && code[j].o2_type == REGISTER && code[j].o2 == code[i].o1) {
+			// 		code[j].o2_type = CONSTANT;
+			// 		code[j].o2 = code[i].last_res;
+			// 	}
+			// 	if (code[i].o3_type == REGISTER && code[j].o3_type == REGISTER && code[j].o3 == code[i].o1) {
+			// 		code[j].o3_type = CONSTANT;
+			// 		code[j].o3 = code[i].last_res;
+			// 	}
+			// }
 		}
 	}
 }
@@ -1020,7 +1155,7 @@ void storeValues() {
 
 void printASM(int start) {
 	for (int i = start; i < code_len; i++) {
-		if (code[i].ins != STORE && code[i].redundant)
+		if (code[i].deleted)
 			continue;
 		printISA(&code[i]);
 	}
