@@ -110,6 +110,11 @@ int getConstant(AST *root);
 AST *newConstantAST(int val);
 AST *simplifyTree(AST *root);
 
+// Check if ASSIGN exists in AST
+int checkAssign(AST *root);
+// If there are no assigns, we can just check for INC/DECs
+void lazy_codegen(AST *root);
+
 /// debug interfaces
 
 // Print token array.
@@ -133,27 +138,33 @@ int identifiers[3] = {-1, -1, -1};
 // Track modified registers
 int modified[3] = {0, 0, 0};
 
-AST *rooot;
-
 int main(int argc, char **argv) {
 	if (argc == 2)
 		DEBUG = 1;
 	while (fgets(input, MAX_LENGTH, stdin) != NULL) {
 		Token *content = lexer(input);
 		size_t len = token_list_to_arr(&content);
+		if (len <= 0)
+			continue;
 		// if (DEBUG)
 		// 	token_print(content, len);
-		AST *ast_root = rooot = parser(content, len);
-		if (DEBUG)
-			AST_print(ast_root);
+		AST *ast_root = parser(content, len);
+		// if (DEBUG)
+		// 	AST_print(ast_root);
 
 		semantic_check(ast_root);
-
-		simplifyTree(ast_root);
+		ast_root = simplifyTree(ast_root);
 		if (DEBUG)
 			AST_print(ast_root);
 
-		codegen(ast_root);
+		if (checkAssign(ast_root)) {
+			codegen(ast_root);
+		} else {
+			if (DEBUG)
+				printf("Using LAZY codegen\n");
+			lazy_codegen(ast_root);
+		}
+		
 		freeRegisters();
 		if (DEBUG) {
 			printASM(last_len);
@@ -268,6 +279,9 @@ AST *parser(Token *arr, size_t len) {
 
 AST *parse(Token *arr, int l, int r, GrammarState S) {
 	AST *now = NULL;
+	if (l > r) {
+		err("Expected expression")
+	}
 	int nxt;
 	switch (S) {
 		case STMT:
@@ -304,13 +318,9 @@ AST *parse(Token *arr, int l, int r, GrammarState S) {
 		case UNARY_EXPR:
 			// TODO: Implement UNARY_EXPR.
 			// hint: Take POSTFIX_EXPR as reference.
-			if (arr[l].kind == PREINC || arr[l].kind == PREDEC || arr[l].kind == MINUS) {
+			if (arr[l].kind == PREINC || arr[l].kind == PREDEC || arr[l].kind == PLUS || arr[l].kind == MINUS) {
 				now = new_AST(arr[l].kind, 0);
 				now->mid = parse(arr, l + 1, r, UNARY_EXPR);
-				return now;
-			}
-			if (arr[l].kind == PLUS) {
-				now = parse(arr, l + 1, r, UNARY_EXPR);
 				return now;
 			}
 			return parse(arr, l, r, POSTFIX_EXPR);
@@ -324,7 +334,9 @@ AST *parse(Token *arr, int l, int r, GrammarState S) {
 			return parse(arr, l, r, PRI_EXPR);
 		case PRI_EXPR:
 			if (findNextSection(arr, l, r, condRPAR) == r) {
-				now = parse(arr, l + 1, r - 1, EXPR);
+
+				now = new_AST(LPAR, 0);
+				now->mid = parse(arr, l + 1, r - 1, EXPR);
 				return now;
 			}
 			if (l == r) {
@@ -375,9 +387,11 @@ int condRPAR(Kind kind) {
 
 void semantic_check(AST *now) {
 	if (now == NULL) return;
+	
 	// Left operand of '=' must be an identifier or identifier with one or more parentheses.
 	if (now->kind == ASSIGN) {
 		AST *tmp = now->lhs;
+		while (tmp->kind == LPAR) tmp = tmp->mid;
 		if (tmp->kind != IDENTIFIER)
 			err("Lvalue is required as left operand of assignment.");
 	}
@@ -388,6 +402,7 @@ void semantic_check(AST *now) {
 	if (now->kind == PREINC || now->kind == POSTINC ||
 		now->kind == PREDEC || now->kind == POSTDEC) {
 		AST *tmp = now->mid;
+		while (tmp->kind == LPAR) tmp = tmp->mid;
 		if (!(tmp->kind == IDENTIFIER || tmp->kind == ASSIGN))
 			err("INC/DEC must follow an identifier.");
 	}
@@ -430,6 +445,17 @@ AST *simplifyTree(AST *root) {
 	root->mid = simplifyTree(root->mid);
 	root->rhs = simplifyTree(root->rhs);
 
+	// Essential
+	if (root->kind == PLUS || root->kind == LPAR) {
+		if (root->mid == NULL) {
+			err("Expected expression")
+		}
+		AST *tmp = root;
+		root = root->mid;
+		free(tmp);
+		return root;
+	}
+	
 	if (root->kind == ADD) {
 		if (isConstant(root->lhs) && isConstant(root->rhs)) {
 			AST *tmp = root;
@@ -710,7 +736,7 @@ AST *simplifyTree(AST *root) {
 			return root;
 		}
 	}
-
+	
 	return root;
 }
 
@@ -740,23 +766,15 @@ int codegen(AST *root) {
 			l = codegen(root->lhs);
 			DONT_LOAD = 0;
 
-			if (l >= 0 || (l > NULLREG && registers[-l] != IDEN)) {
+			if (l >= 0 || (l != NULLREG && registers[-l] != IDEN)) {
 				err("Lvalue should be an identifier!")
 			}
 
-			if (l > NULLREG) {
-				for (int i = 0; i < 3; i++) {
-					if (identifiers[i] == -l) {
-						registers[identifiers[i]] = FREE;
-						identifiers[i] = -dest;
-						modified[i] = 1;
-						break;
-					}
-				}
-			} else {
-				identifiers[-(l - NULLREG)] = -dest;
-				modified[-(l - NULLREG)] = 1;
-			}
+			if (l != NULLREG)
+				registers[-l] = FREE;
+
+			identifiers[root->lhs->val - 'x'] = -dest;
+			modified[root->lhs->val - 'x'] = 1;
 
 			registers[-dest] = IDEN;
 			return dest;
@@ -824,19 +842,14 @@ int codegen(AST *root) {
 			}
 
 			addISA(root->kind == PREINC? ADD: SUB, l, l, 1);
-			for (int i = 0; i < 3; i++) {
-				if (identifiers[i] == -l) {
-					modified[i] = 1;
-					break;
-				}
-			}
+			modified[root->mid->val - 'x'] = 1;
 			return dest;
 
 		case IDENTIFIER:
 			if (identifiers[root->val - 'x'] != -1)
 				return -identifiers[root->val - 'x'];
 			if (DONT_LOAD)
-				return NULLREG - (root->val - 'x');
+				return NULLREG;
 			dest = findNewRegister();
 			registers[-dest] = IDEN;
 			identifiers[root->val - 'x'] = -dest;
@@ -863,6 +876,49 @@ int codegen(AST *root) {
 			err("AST kind not found!")
 	}
 	
+}
+
+int checkAssign(AST *root) {
+	if (root == NULL)
+		return 0;
+
+	if (root->kind == ASSIGN)
+		return 1;
+
+	return checkAssign(root->lhs) || checkAssign(root->mid) || checkAssign(root->rhs);
+}
+
+void lazy_codegen(AST *root) {
+	if (root == NULL)
+		return;
+
+	lazy_codegen(root->lhs);
+	lazy_codegen(root->mid);
+	lazy_codegen(root->rhs);
+	
+	if (root->kind == PREINC || root->kind == POSTINC) {
+		int l = codegen(root->mid);
+
+		if (l >= 0 || registers[-l] != IDEN) {
+			err("INC/DEC should follow an identifier!")
+		}
+
+		addISA(ADD, l, l, 1);
+		modified[root->mid->val - 'x'] = 1;
+		return;
+	}
+
+	if (root->kind == PREDEC || root->kind == POSTDEC) {
+		int l = codegen(root->mid);
+
+		if (l >= 0 || registers[-l] != IDEN) {
+			err("INC/DEC should follow an identifier!")
+		}
+
+		addISA(ADD, l, l, 1);
+		modified[root->mid->val - 'x'] = 1;
+		return;
+	}
 }
 
 // Returns (-1 ~ -256)
@@ -1073,6 +1129,7 @@ void AST_print(AST *head) {
 	AST_print(head->lhs);
 	strcpy(indent_now, "` ");
 	AST_print(head->mid);
+
 	AST_print(head->rhs);
 	indent -= 2;
 	(*indent_now) = '\0';
