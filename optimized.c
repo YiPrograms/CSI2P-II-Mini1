@@ -154,24 +154,22 @@ int main(int argc, char **argv) {
 	while (fgets(input, MAX_LENGTH, stdin) != NULL) {
 		Token *content = lexer(input);
 		size_t len = token_list_to_arr(&content);
+
 		if (len <= 0)
 			continue;
-		// if (DEBUG)
-		// 	token_print(content, len);
+
+		// if (DEBUG) token_print(content, len);
 		AST *ast_root = parser(content, len);
-		// if (DEBUG)
-		// 	AST_print(ast_root);
+		// if (DEBUG) AST_print(ast_root);
 
 		semantic_check(ast_root);
 		ast_root = simplifyTree(ast_root);
-		if (DEBUG)
-			AST_print(ast_root);
+		if (DEBUG) AST_print(ast_root);
 
 		if (checkAssign(ast_root)) {
 			codegen(ast_root);
 		} else {
-			if (DEBUG)
-				printf("Using LAZY codegen\n");
+			if (DEBUG) printf("Using LAZY codegen\n");
 			lazy_codegen(ast_root);
 		}
 		
@@ -181,9 +179,11 @@ int main(int argc, char **argv) {
 			last_len = code_len;
 			printRegisters();
 		}
+
 		free(content);
 		freeAST(ast_root);
 	}
+	
 	removeRedundantASM();
 	constantFinding();
 	removeRedundantASM();
@@ -441,6 +441,17 @@ int getConstant(AST *root) {
 	err("Not a constant!");
 }
 
+int canCut(AST *root) {
+	if (root == NULL)
+		return 1;
+
+	if (root->kind == ASSIGN || root->kind == PREINC || root->kind == POSTINC ||
+		root->kind == PREDEC || root->kind == POSTDEC)
+		return 0;
+
+	return canCut(root->lhs) && canCut(root->mid) && canCut(root->rhs);
+}
+
 AST *newConstantAST(int val) {
 	if (val >= 0)
 		return new_AST(CONSTANT, val);
@@ -561,8 +572,8 @@ AST *simplifyTree(AST *root) {
 			freeAST(tmp);
 			return root;
 		}
-		if ((isConstant(root->lhs) && getConstant(root->lhs) == 0) ||
-			(isConstant(root->rhs) && getConstant(root->rhs) == 0)) {
+		if (((isConstant(root->lhs) && getConstant(root->lhs) == 0) ||
+			(isConstant(root->rhs) && getConstant(root->rhs) == 0)) && canCut(root)) {
 			AST *tmp = root;
 			root = newConstantAST(0);
 			freeAST(tmp);
@@ -700,7 +711,7 @@ AST *simplifyTree(AST *root) {
 			freeAST(tmp);
 			return root;
 		}
-		if (isConstant(root->lhs) && getConstant(root->lhs) == 0) {
+		if (isConstant(root->lhs) && getConstant(root->lhs) == 0 && canCut(root)) {
 			AST *tmp = root;
 			root = newConstantAST(0);
 			freeAST(tmp);
@@ -725,8 +736,8 @@ AST *simplifyTree(AST *root) {
 			freeAST(tmp);
 			return root;
 		}
-		if ((isConstant(root->lhs) && getConstant(root->lhs) == 0) ||
-			(isConstant(root->rhs) && getConstant(root->rhs) == 1)) {
+		if (((isConstant(root->lhs) && getConstant(root->lhs) == 0) ||
+			(isConstant(root->rhs) && getConstant(root->rhs) == 1)) && canCut(root)) {
 			AST *tmp = root;
 			root = newConstantAST(0);
 			freeAST(tmp);
@@ -928,7 +939,7 @@ void lazy_codegen(AST *root) {
 			err("INC/DEC should follow an identifier!")
 		}
 
-		addISA(ADD, l, l, 1);
+		addISA(SUB, l, l, 1);
 		modified[root->mid->val - 'x'] = 1;
 		return;
 	}

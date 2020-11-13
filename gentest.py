@@ -1,11 +1,11 @@
 #! /usr/bin/env python3
 
 import random
+import os
 
 allOps = ["ADD", "SUB", "MUL", "DIV", "REM", "PREINC", "PREDEC", "POSTINC", "POSTDEC", *["IDENTIFIER"]*3, *["CONSTANT"] * 3, "LPAR", "PLUS", "MINUS"]
-allOps = [*(allOps*100), "ASSIGN"]
-idenOps = ("ASSIGN", "LPAR", "LPAR", "LPAR", "IDENTIFIER", "IDENTIFIER", "IDENTIFIER")
-idenOps = [*(idenOps*100), "ASSIGN"]
+allOps = [*(allOps*2), "ASSIGN"]
+idenOps = ("LPAR", "IDENTIFIER")
 
 
 symbols = {"ASSIGN": '=', "ADD":'+', "SUB": '-', "MUL": '*', "DIV": '/', "REM": '%', "PREINC": '++', "PREDEC": '--', "POSTINC": '++', "POSTDEC": '--', "IDENTIFIER": '', "CONSTANT": '', "LPAR": '', "PLUS": '+', "MINUS": '-'}
@@ -37,23 +37,44 @@ def randomAST(allow):
 
 def printAST(now):
     if len(now) == 0:
-        return
+        return ""
     
     ins, val, lhs, rhs = now
     
-    if ins in ("ASSIGN", "ADD", "SUB", "MUL", "DIV", "REM" ,"PREINC", "PREDEC", "POSTINC", "POSTDEC", "PLUS", "MINUS"):
-        print('(', end="")
-        printAST(lhs)
-        print(symbols[ins], end="")
-        printAST(rhs)
-        print(')', end="")
-    elif ins == "LPAR":
-        print('(', end="")
-        printAST(lhs)
-        print(')', end="")
-    elif ins in ("IDENTIFIER", "CONSTANT"):
-        print(val, end="")
+    line = ""
 
-root = randomAST(("ASSIGN", ))
-printAST(root)
-print()
+    if ins in ("ASSIGN", "ADD", "SUB", "MUL", "DIV", "REM" ,"PREINC", "PREDEC", "POSTINC", "POSTDEC", "PLUS", "MINUS", "LPAR"):
+        line += "("
+        line += printAST(lhs)
+        line += symbols[ins]
+        line += printAST(rhs)
+        line += ')'
+    elif ins in ("IDENTIFIER", "CONSTANT"):
+        line += str(val)
+    return line
+
+
+
+while True:
+    code = []
+
+    for _ in range(random.randint(3, 200)):
+        root = randomAST((*allOps, *["ASSIGN"]*10))
+        line = printAST(root)
+        code.append(line)
+
+    open("test_tmp.c", "w").write("""
+#include <stdio.h>
+
+int main() {{
+    int x = 2, y = 3, z = 5;
+    {};
+    printf("Ans: %d %d %d\\n", x, y, z);
+}}
+""".format(";\n\t".join(code)))
+
+    res = os.system("gcc test_tmp.c -Werror=div-by-zero -Werror=sequence-point -fsanitize=undefined -o test.out &> /dev/null")
+    if res == 0:
+        print("\n".join(code))
+        os.system("./test.out 1>&2")
+        break
