@@ -416,7 +416,7 @@ void semantic_check(AST *now) {
 		now->kind == PREDEC || now->kind == POSTDEC) {
 		AST *tmp = now->mid;
 		while (tmp->kind == LPAR) tmp = tmp->mid;
-		if (!(tmp->kind == IDENTIFIER || tmp->kind == ASSIGN))
+		if (tmp->kind != IDENTIFIER)
 			err("INC/DEC must follow an identifier.");
 	}
 
@@ -778,7 +778,7 @@ int codegen(AST *root) {
 			DONT_LOAD = 1;
 			l = codegen(root->lhs);
 			DONT_LOAD = 0;
-
+			
 			if (l >= 0 || (l != NULLREG && registers[-l] != IDEN)) {
 				err("Lvalue should be an identifier!")
 			}
@@ -854,7 +854,7 @@ int codegen(AST *root) {
 				dest = l;
 			}
 
-			addISA(root->kind == PREINC? ADD: SUB, l, l, 1);
+			addISA((root->kind == PREINC || root->kind == POSTINC)? ADD: SUB, l, l, 1);
 			modified[root->mid->val - 'x'] = 1;
 			return dest;
 
