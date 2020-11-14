@@ -119,7 +119,7 @@ int checkAssign(AST *root);
 void lazy_codegen(AST *root);
 
 void removeRedundantASM();
-void traceASM(int i, int r);
+void traceASM(int i, unsigned int r);
 
 void loadArgs(ISA *isa, int* regs, int *l, int *r);
 void runASM(int* init);
@@ -263,7 +263,7 @@ size_t token_list_to_arr(Token **head) {
 	for (res = 0; now != NULL; res++) now = now->next;
 	now = (*head);
 	if (res != 0) (*head) = (Token*)malloc(sizeof(Token) * res);
-	for (int i = 0; i < res; i++) {
+	for (int i = 0; i < (int)res; i++) {
 		(*head)[i] = (*now);
 		del = now;
 		now = now->next;
@@ -273,7 +273,7 @@ size_t token_list_to_arr(Token **head) {
 }
 
 AST *parser(Token *arr, size_t len) {
-	for (int i = 1; i < len; i++) {
+	for (int i = 1; i < (int)len; i++) {
 		// correctly identify "ADD" and "SUB"
 		if (arr[i].kind == PLUS || arr[i].kind == MINUS) {
 			switch (arr[i - 1].kind) {
@@ -1011,7 +1011,8 @@ void addISA(Kind ins, int o1, int o2, int o3) {
 	new->first_run = 1;
 }
 
-void traceASM(int i, int r) {
+
+void traceASM(int i, unsigned int r) {
 	while (i >= 0 && (code[i].deleted || code[i].o1 != r))
 		i--;
 
@@ -1131,12 +1132,12 @@ void constantFinding() {
 		if (code[i].is_const) {
 			if (code[i].last_res >= 0) {
 				code[i].ins = ADD;
-				code[i].o2_type = code[i].o3_type = CONSTANT;
+				code[i].o2_type = code[i].o3_type = VALUE;
 				code[i].o2 = 0;
 				code[i].o3 = code[i].last_res;
 			} else {
 				code[i].ins = SUB;
-				code[i].o2_type = code[i].o3_type = CONSTANT;
+				code[i].o2_type = code[i].o3_type = VALUE;
 				code[i].o2 = 0;
 				code[i].o3 = -code[i].last_res;
 			}
@@ -1164,6 +1165,8 @@ void storeValues() {
 	}
 }
 
+#pragma GCC push_options
+#pragma GCC optimize ("O0")
 void printASM(int start) {
 	for (int i = start; i < code_len; i++) {
 		if (code[i].deleted)
@@ -1181,8 +1184,10 @@ void printISA(ISA *isa) {
 	const static char format_register[] = "r%u";
 	const static char format_address[] = "[%u]";
 	const static char format_value[] = "%u";
-	static char op1[8], op2[8], op3[8];
-
+	static char op1[20], op2[20], op3[20];
+	// if (isa->deleted) {
+	// 	printf("D ");
+	// }
 	if (isa->ins == LOAD) {
 		sprintf(op1, format_register, isa->o1 - 1);
 		sprintf(op2, format_address, isa->o2);
@@ -1205,6 +1210,8 @@ void printISA(ISA *isa) {
 		printf(format_arithmetic, insName[isa->ins], op1, op2, op3);
 	}
 }
+#pragma GCC pop_options
+
 
 void printRegisters() {
 	for (int i = 1; i <= 256; i++)
@@ -1234,7 +1241,7 @@ void token_print(Token *in, size_t len) {
 	};
 	const static char format_str[] = "<Index = %3d>: %-10s, %-6s = %s\n";
 	const static char format_int[] = "<Index = %3d>: %-10s, %-6s = %d\n";
-	for(int i = 0; i < len; i++) {
+	for(int i = 0; i < (int)len; i++) {
 		switch(in[i].kind) {
 			case LPAR:
 			case RPAR:

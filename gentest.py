@@ -44,10 +44,12 @@ def printAST(now):
     line = ""
 
     if ins in ("ASSIGN", "ADD", "SUB", "MUL", "DIV", "REM" ,"PREINC", "PREDEC", "POSTINC", "POSTDEC", "PLUS", "MINUS", "LPAR"):
-        line += "("
         line += printAST(lhs)
         line += symbols[ins]
         line += printAST(rhs)
+    elif ins == "LPAR":
+        line += "("
+        line += printAST(lhs)
         line += ')'
     elif ins in ("IDENTIFIER", "CONSTANT"):
         line += str(val)
