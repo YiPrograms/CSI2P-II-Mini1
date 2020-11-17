@@ -1011,7 +1011,6 @@ void addISA(Kind ins, int o1, int o2, int o3) {
 	new->first_run = 1;
 }
 
-
 void traceASM(int i, unsigned int r) {
 	while (i >= 0 && (code[i].deleted || code[i].o1 != r))
 		i--;
@@ -1116,16 +1115,6 @@ void constantFinding() {
 		}
 	}
 
-	// for (int i = 0; i < code_len; i++) {
-	// 	if (code[i].redundant)
-	// 		continue;
-	// 	if (code[i].ins == LOAD || !code[i].is_const)
-	// 		printf("Not a const\n");
-	// 	else
-	// 		printf("Const: %d\n", code[i].last_res);
-		
-	// }
-
 	for (int i = 0; i < code_len; i++) {
 		if (code[i].deleted || code[i].ins == LOAD)
 			continue;
@@ -1135,24 +1124,24 @@ void constantFinding() {
 				code[i].o2_type = code[i].o3_type = VALUE;
 				code[i].o2 = 0;
 				code[i].o3 = code[i].last_res;
+				// for (int j = i + 1; j < code_len && !(code[j].o1_type == REGISTER && code[j].o1 == code[i].o1); j++) {
+				// 	if (code[j].deleted || code[j].ins == LOAD)
+				// 		continue;
+				// 	if (code[j].o2_type == REGISTER && code[j].o2 == code[i].o1) {
+				// 		code[j].o2_type = VALUE;
+				// 		code[j].o2 = code[i].last_res;
+				// 	}
+				// 	if (code[j].o3_type == REGISTER && code[j].o3 == code[i].o1) {
+				// 		code[j].o3_type = VALUE;
+				// 		code[j].o3 = code[i].last_res;
+				// 	}
+				// }
 			} else {
 				code[i].ins = SUB;
 				code[i].o2_type = code[i].o3_type = VALUE;
 				code[i].o2 = 0;
 				code[i].o3 = -code[i].last_res;
 			}
-			
-
-			// for (int j = i + 1; j < code_len && !(code[j].o1_type == REGISTER && code[j].o1 == code[i].o1); j++) {
-			// 	if (code[i].o2_type == REGISTER && code[j].o2_type == REGISTER && code[j].o2 == code[i].o1) {
-			// 		code[j].o2_type = CONSTANT;
-			// 		code[j].o2 = code[i].last_res;
-			// 	}
-			// 	if (code[i].o3_type == REGISTER && code[j].o3_type == REGISTER && code[j].o3 == code[i].o1) {
-			// 		code[j].o3_type = CONSTANT;
-			// 		code[j].o3 = code[i].last_res;
-			// 	}
-			// }
 		}
 	}
 }
