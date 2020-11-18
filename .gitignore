@@ -5,3 +5,14 @@ a.out
 test
 test_tmp.c
 test.out
+error-no.txt
+error-optimized.txt
+gentest2.py
+no
+no.c
+optimized
+test_tmp2.c
+test-no.py
+test-optimized.py
+test2.out
+mini1
