@@ -455,6 +455,13 @@ int canCut(AST *root) {
 AST *newConstantAST(int val) {
 	if (val >= 0)
 		return new_AST(CONSTANT, val);
+	if (val == -2147483648) {
+		AST *tmp = new_AST(SUB, 0);
+		tmp->lhs = new_AST(MINUS, 0);
+		tmp->lhs->mid = new_AST(CONSTANT, 2147483647);
+		tmp->rhs = new_AST(CONSTANT, 1);
+		return tmp;
+	}
 
 	AST *tmp = new_AST(MINUS, 0);
 	tmp->mid = new_AST(CONSTANT, -val);
@@ -817,6 +824,13 @@ int codegen(AST *root) {
 					case SUB: // May become negative!
 						if (l - r >= 0)
 							return l - r;
+						if (l - r == -2147483648) {
+							AST *tmp = new_AST(SUB, 0);
+							tmp->lhs = new_AST(MINUS, 0);
+							tmp->lhs->mid = new_AST(CONSTANT, 2147483647);
+							tmp->rhs = new_AST(CONSTANT, 1);
+							return codegen(tmp);
+						}
 						AST *tmp = new_AST(MINUS, 0);
 						tmp->mid = new_AST(CONSTANT, -(l - r));
 						return codegen(tmp);
@@ -1136,7 +1150,7 @@ void constantFinding() {
 				// 		code[j].o3 = code[i].last_res;
 				// 	}
 				// }
-			} else {
+			} else if (code[i].last_res != -2147483648) {
 				code[i].ins = SUB;
 				code[i].o2_type = code[i].o3_type = VALUE;
 				code[i].o2 = 0;
